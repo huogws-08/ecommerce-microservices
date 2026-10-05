@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package auth;
+
+service AuthService {
+  rpc GetUserById(GetUserByIdRequest) returns (GetUserByIdResponse);
+}
+
+message GetUserByIdRequest {
+  int32 uid = 1;
+}
+
+message GetUserByIdResponse {
+  int32 uid = 1;
+  string username = 2;
+  int32 roleid = 3;
+  string rolename = 4;
+}
