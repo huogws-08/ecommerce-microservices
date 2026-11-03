@@ -31,17 +31,14 @@ async function createOrder(req, res) {
         });
     }
 
-    const { uid, items } = req.body;
+    const { uid: requestedUid, items } = req.body;
 
-    if (user.role !== "ADMIN" && Number(uid) !== user.uid) {
-        return res.status(403).json({
-            message: "Cannot create an order for another customer",
-        });
-    }
+    const customerUid =
+        user.role === "ADMIN" ? Number(requestedUid) : user.uid;
 
     if (
-        !Number.isInteger(uid) ||
-        uid <= 0 ||
+        !Number.isInteger(customerUid) ||
+        customerUid <= 0 ||
         !Array.isArray(items) ||
         items.length === 0
     ) {
@@ -76,7 +73,7 @@ async function createOrder(req, res) {
 
     try {
         // 1. Lấy thông tin khách hàng
-        const customer = await getCustomer(uid);
+        const customer = await getCustomer(customerUid);
 
         // 2. Kiểm tra sản phẩm và tính tổng tiền
         const details = [];
@@ -132,7 +129,7 @@ async function createOrder(req, res) {
                 (uid, total_amount, discount_amount, final_amount, status)
              VALUES ($1, $2, $3, $4, 'CREATED')
              RETURNING *`,
-            [uid, totalAmount, discountAmount, finalAmount]
+            [customerUid, totalAmount, discountAmount, finalAmount]
         );
 
         const order = orderResult.rows[0];
@@ -156,7 +153,7 @@ async function createOrder(req, res) {
         // 8. Lưu Outbox trong cùng transaction
         const eventPayload = {
             oid: order.oid,
-            uid,
+            uid: customerUid,
             total_amount: totalAmount,
             discount_amount: discountAmount,
             final_amount: finalAmount,
