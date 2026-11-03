@@ -1,9 +1,10 @@
-
 const { pool } = require("../config/db");
 const { getCustomer } = require("../grpc/customerClient");
+
 const {
     getProduct,
     checkAndDecreaseStock,
+    increaseStock,
 } = require("../grpc/productClient");
 
 function getAuthUser(req) {
@@ -49,6 +50,19 @@ async function createOrder(req, res) {
         });
     }
 
+    for (const item of items) {
+        if (
+            typeof item.pid !== "string" ||
+            !item.pid.trim() ||
+            !Number.isInteger(item.quantity) ||
+            item.quantity <= 0
+        ) {
+            return res.status(400).json({
+                message: "Invalid product or quantity",
+            });
+        }
+    }
+
     const client = await pool.connect().catch(() => null);
 
     if (!client) {
@@ -57,30 +71,22 @@ async function createOrder(req, res) {
         });
     }
 
+    let transactionStarted = false;
+    const decreasedStocks = [];
+
     try {
-        // 1. Lấy khách hàng
+        // 1. Lấy thông tin khách hàng
         const customer = await getCustomer(uid);
 
-        // 2. Lấy sản phẩm và tính tiền
+        // 2. Kiểm tra sản phẩm và tính tổng tiền
         const details = [];
         let totalAmount = 0;
 
         for (const item of items) {
-            if (
-                typeof item.pid !== "string" ||
-                !item.pid.trim() ||
-                !Number.isInteger(item.quantity) ||
-                item.quantity <= 0
-            ) {
-                return res.status(400).json({
-                    message: "Invalid product or quantity",
-                });
-            }
-
             const product = await getProduct(item.pid);
 
             if (product.quantity < item.quantity) {
-                return res.status(400).json({
+                return res.status(409).json({
                     message: `Insufficient stock for ${item.pid}`,
                 });
             }
@@ -97,34 +103,46 @@ async function createOrder(req, res) {
             totalAmount += subtotal;
         }
 
-        // 3. Áp dụng giảm giá theo điểm khách hàng
+        // 3. Tính discount
         const discountRate = customer.score >= 100 ? 0.1 : 0;
         const discountAmount = totalAmount * discountRate;
         const finalAmount = totalAmount - discountAmount;
 
-        // 4. Giảm tồn kho
+        // 4. Bắt đầu transaction PostgreSQL
+        await client.query("BEGIN");
+        transactionStarted = true;
+
+        // 5. Giảm tồn kho qua Product Service
         for (const item of details) {
-            await checkAndDecreaseStock(item.pid, item.quantity);
+            await checkAndDecreaseStock(
+                item.pid,
+                item.quantity
+            );
+
+            // Ghi nhận để có thể hoàn tồn kho nếu bước sau thất bại
+            decreasedStocks.push({
+                pid: item.pid,
+                quantity: item.quantity,
+            });
         }
 
-        // 5. Transaction PostgreSQL
-        await client.query("BEGIN");
-
+        // 6. Lưu Order
         const orderResult = await client.query(
             `INSERT INTO orders
-        (uid, total_amount, discount_amount, final_amount, status)
-       VALUES ($1, $2, $3, $4, 'CREATED')
-       RETURNING *`,
+                (uid, total_amount, discount_amount, final_amount, status)
+             VALUES ($1, $2, $3, $4, 'CREATED')
+             RETURNING *`,
             [uid, totalAmount, discountAmount, finalAmount]
         );
 
         const order = orderResult.rows[0];
 
+        // 7. Lưu OrderDetail
         for (const item of details) {
             await client.query(
                 `INSERT INTO order_details
-          (oid, pid, quantity, unit_price, subtotal)
-         VALUES ($1, $2, $3, $4, $5)`,
+                    (oid, pid, quantity, unit_price, subtotal)
+                 VALUES ($1, $2, $3, $4, $5)`,
                 [
                     order.oid,
                     item.pid,
@@ -135,7 +153,7 @@ async function createOrder(req, res) {
             );
         }
 
-        // 6. Transactional Outbox
+        // 8. Lưu Outbox trong cùng transaction
         const eventPayload = {
             oid: order.oid,
             uid,
@@ -147,8 +165,8 @@ async function createOrder(req, res) {
 
         await client.query(
             `INSERT INTO outbox_events
-        (aggregate_type, aggregate_id, event_type, payload)
-       VALUES ($1, $2, $3, $4)`,
+                (aggregate_type, aggregate_id, event_type, payload)
+             VALUES ($1, $2, $3, $4)`,
             [
                 "ORDER",
                 String(order.oid),
@@ -157,7 +175,9 @@ async function createOrder(req, res) {
             ]
         );
 
+        // 9. Commit
         await client.query("COMMIT");
+        transactionStarted = false;
 
         return res.status(201).json({
             message: "Order created successfully",
@@ -165,9 +185,40 @@ async function createOrder(req, res) {
             items: details,
         });
     } catch (error) {
-        await client.query("ROLLBACK").catch(() => { });
-
         console.error("Create order error:", error);
+
+        // 10. Rollback PostgreSQL
+        if (transactionStarted) {
+            await client.query("ROLLBACK").catch((rollbackError) => {
+                console.error("Order rollback failed:", rollbackError);
+            });
+
+            transactionStarted = false;
+        }
+
+        // 11. Compensation: hoàn lại tồn kho đã giảm
+        for (const item of [...decreasedStocks].reverse()) {
+            try {
+                await increaseStock(item.pid, item.quantity);
+            } catch (compensationError) {
+                console.error(
+                    `CRITICAL: Cannot restore stock for ${item.pid}:`,
+                    compensationError
+                );
+            }
+        }
+
+        if (error.code === 9) {
+            return res.status(409).json({
+                message: "Insufficient stock",
+            });
+        }
+
+        if (error.code === 5) {
+            return res.status(404).json({
+                message: error.message || "Product not found",
+            });
+        }
 
         return res.status(500).json({
             message: "Failed to create order",
@@ -201,6 +252,7 @@ async function getOrders(req, res) {
         return res.status(200).json(result.rows);
     } catch (error) {
         console.error("getOrders error:", error);
+
         return res.status(500).json({
             message: "Failed to get orders",
         });
@@ -258,6 +310,7 @@ async function getOrderById(req, res) {
         });
     } catch (error) {
         console.error("getOrderById error:", error);
+
         return res.status(500).json({
             message: "Failed to get order",
         });

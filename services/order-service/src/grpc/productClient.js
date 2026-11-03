@@ -1,4 +1,3 @@
-
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const path = require("path");
@@ -45,7 +44,20 @@ function checkAndDecreaseStock(pid, quantity) {
     });
 }
 
+function increaseStock(pid, quantity) {
+    return new Promise((resolve, reject) => {
+        client.IncreaseStock(
+            { pid, quantity },
+            (error, response) => {
+                if (error) return reject(error);
+                resolve(response);
+            }
+        );
+    });
+}
+
 module.exports = {
     getProduct,
     checkAndDecreaseStock,
+    increaseStock,
 };

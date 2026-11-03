@@ -1,4 +1,3 @@
-
 syntax = "proto3";
 
 package product;
@@ -8,6 +7,9 @@ service ProductService {
 
   rpc CheckAndDecreaseStock (DecreaseStockRequest)
       returns (DecreaseStockResponse);
+
+  rpc IncreaseStock (IncreaseStockRequest)
+      returns (IncreaseStockResponse);
 }
 
 message GetProductRequest {
@@ -27,6 +29,17 @@ message DecreaseStockRequest {
 }
 
 message DecreaseStockResponse {
+  bool success = 1;
+  string message = 2;
+  int32 remaining_quantity = 3;
+}
+
+message IncreaseStockRequest {
+  string pid = 1;
+  int32 quantity = 2;
+}
+
+message IncreaseStockResponse {
   bool success = 1;
   string message = 2;
   int32 remaining_quantity = 3;

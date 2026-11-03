@@ -1,4 +1,3 @@
-
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const path = require("path");
@@ -32,7 +31,7 @@ async function getProduct(call, callback) {
             });
         }
 
-        callback(null, {
+        return callback(null, {
             pid: product.pid,
             pname: product.pname,
             price: product.price,
@@ -41,7 +40,7 @@ async function getProduct(call, callback) {
     } catch (error) {
         console.error("GetProduct error:", error);
 
-        callback({
+        return callback({
             code: grpc.status.INTERNAL,
             message: "Failed to get product",
         });
@@ -90,7 +89,7 @@ async function checkAndDecreaseStock(call, callback) {
             });
         }
 
-        callback(null, {
+        return callback(null, {
             success: true,
             message: "Stock decreased successfully",
             remaining_quantity: product.quantity,
@@ -98,9 +97,53 @@ async function checkAndDecreaseStock(call, callback) {
     } catch (error) {
         console.error("CheckAndDecreaseStock error:", error);
 
-        callback({
+        return callback({
             code: grpc.status.INTERNAL,
             message: "Failed to decrease stock",
+        });
+    }
+}
+
+async function increaseStock(call, callback) {
+    try {
+        const { pid, quantity } = call.request;
+
+        if (
+            typeof pid !== "string" ||
+            !pid.trim() ||
+            !Number.isInteger(quantity) ||
+            quantity <= 0
+        ) {
+            return callback({
+                code: grpc.status.INVALID_ARGUMENT,
+                message: "Invalid product ID or quantity",
+            });
+        }
+
+        const product = await Product.findOneAndUpdate(
+            { pid },
+            { $inc: { quantity } },
+            { new: true }
+        );
+
+        if (!product) {
+            return callback({
+                code: grpc.status.NOT_FOUND,
+                message: "Product not found",
+            });
+        }
+
+        return callback(null, {
+            success: true,
+            message: "Stock restored successfully",
+            remaining_quantity: product.quantity,
+        });
+    } catch (error) {
+        console.error("IncreaseStock error:", error);
+
+        return callback({
+            code: grpc.status.INTERNAL,
+            message: "Failed to restore stock",
         });
     }
 }
@@ -112,6 +155,7 @@ function startGrpcServer() {
         server.addService(productProto.ProductService.service, {
             GetProduct: getProduct,
             CheckAndDecreaseStock: checkAndDecreaseStock,
+            IncreaseStock: increaseStock,
         });
 
         const port = process.env.GRPC_PORT || 50053;
