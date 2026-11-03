@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Role {
+  roleid   Int    @id @default(autoincrement())
+  rolename String @unique
+
+  users User[]
+}
+
+model User {
+  uid      Int    @id @default(autoincrement())
+  username String @unique
+  password String
+  roleid   Int
+
+  role Role @relation(fields: [roleid], references: [roleid])
+}

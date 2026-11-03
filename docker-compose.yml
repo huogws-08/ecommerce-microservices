@@ -1,0 +1,262 @@
+name: ecommerce-microservices
+
+services:
+  # ================= AUTH DATABASE =================
+  auth-db:
+    image: postgres:16
+    container_name: ecommerce-auth-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_password
+      POSTGRES_DB: auth_db
+    volumes:
+      - auth_data:/var/lib/postgresql/data
+    restart: "no"
+
+  # ================= CUSTOMER DATABASE =================
+  customer-db:
+    image: postgres:16
+    container_name: ecommerce-customer-postgres
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: customer_user
+      POSTGRES_PASSWORD: customer_password
+      POSTGRES_DB: customer_db
+    volumes:
+      - customer_data:/var/lib/postgresql/data
+    restart: "no"
+
+  # ================= REDIS =================
+  redis:
+    image: redis:7
+    container_name: ecommerce-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: "no"
+
+  # ================= PRODUCT DATABASE =================
+  product-db:
+    image: mongo:7
+    container_name: ecommerce-product-mongodb
+    ports:
+      - "127.0.0.1:27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: product_user
+      MONGO_INITDB_ROOT_PASSWORD: product_password
+      MONGO_INITDB_DATABASE: product_db
+    volumes:
+      - product_mongo_data:/data/db
+    restart: "no"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mongosh --quiet -u product_user -p product_password --authenticationDatabase admin --eval "db.adminCommand({ping:1}).ok" | grep 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ================= PRODUCT SERVICE =================
+  product-service:
+    build:
+      context: ./services/product-service
+    container_name: ecommerce-product-service
+    ports:
+      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:50053:50053"
+    environment:
+      PORT: 3003
+      GRPC_PORT: 50053
+      PRODUCT_PROTO_PATH: /proto/product/product.proto
+      MONGODB_URI: mongodb://product_user:product_password@product-db:27017/product_db?authSource=admin
+    depends_on:
+      product-db:
+        condition: service_healthy
+    volumes:
+      - ./proto:/proto:ro
+    restart: "no"
+
+  # ================= ORDER DATABASE =================
+  order-db:
+    image: postgres:16
+    container_name: ecommerce-order-postgres
+    ports:
+      - "127.0.0.1:5435:5432"
+    environment:
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_password
+      POSTGRES_DB: order_db
+    volumes:
+      - order_data:/var/lib/postgresql/data
+    restart: "no"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U order_user -d order_db
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  shipment-db:
+    image: mongo:7
+    container_name: ecommerce-shipment-mongodb
+    ports:
+      - "127.0.0.1:27019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: shipment_user
+      MONGO_INITDB_ROOT_PASSWORD: shipment_password
+      MONGO_INITDB_DATABASE: shipment_db
+    volumes:
+      - shipment_mongo_data:/data/db
+    restart: "no"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mongosh --quiet -u shipment_user -p shipment_password --authenticationDatabase admin --eval "db.adminCommand('ping').ok" | grep 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # ================= KAFKA =================
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: ecommerce-kafka
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://127.0.0.1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: "no"
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    container_name: ecommerce-auth-service
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgresql://auth_user:auth_password@auth-db:5432/auth_db
+      JWT_SECRET: dev-secret-change-later
+      JWT_EXPIRES_IN: 1d
+    depends_on:
+      - auth-db
+    restart: "no"
+
+  customer-service:
+    build:
+      context: ./services/customer-service
+    container_name: ecommerce-customer-service
+    ports:
+      - "127.0.0.1:3002:3002"
+      - "127.0.0.1:50052:50052"
+    environment:
+      PORT: "3002"
+      GRPC_PORT: "50052"
+      DATABASE_URL: postgresql://customer_user:customer_password@customer-db:5432/customer_db
+    depends_on:
+      - customer-db
+    volumes:
+      - ./proto:/proto:ro
+    restart: "no"
+
+  order-service:
+    build:
+      context: ./services/order-service
+    container_name: ecommerce-order-service
+    expose:
+      - "3004"
+    environment:
+      PORT: "3004"
+      DATABASE_URL: postgresql://order_user:order_password@order-db:5432/order_db
+      CUSTOMER_GRPC_URL: customer-service:50052
+      PRODUCT_GRPC_URL: product-service:50053
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      order-db:
+        condition: service_healthy
+      customer-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      kafka:
+        condition: service_started
+    volumes:
+      - ./proto:/proto:ro
+    restart: "no"
+
+  shipment-service:
+    build:
+      context: ./services/shipment-service
+    container_name: ecommerce-shipment-service
+    ports:
+      - "127.0.0.1:3005:3005"
+    environment:
+      PORT: "3005"
+      MONGODB_URI: mongodb://shipment_user:shipment_password@shipment-db:27017/shipment_db?authSource=admin
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: order-created
+      KAFKA_GROUP_ID: shipment-service-group
+    depends_on:
+      shipment-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    restart: "no"
+
+  gateway:
+    build:
+      context: ./gateway
+    container_name: ecommerce-api-gateway
+    ports:
+      - "127.0.0.1:3100:3100"
+    environment:
+      PORT: "3100"
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-later
+      AUTH_SERVICE_URL: http://auth-service:3001
+      CUSTOMER_SERVICE_URL: http://customer-service:3002
+      PRODUCT_SERVICE_URL: http://product-service:3003
+      ORDER_SERVICE_URL: http://order-service:3004
+      SHIPMENT_SERVICE_URL: http://shipment-service:3005
+    depends_on:
+      - redis
+      - auth-service
+      - customer-service
+      - product-service
+      - order-service
+      - shipment-service
+    restart: "no"
+
+volumes:
+  auth_data:
+    external: true
+    name: ac036612da7b4f73b514a27ad7a3e974125fcc3442a46f6bd9fc491a6eac24f3
+
+  customer_data:
+    external: true
+    name: customer_postgres_data
+
+  redis_data:
+    external: true
+    name: 69071e76a267af0a64ee5bb0576c6a5bea9406b7b465ebfccf3b5b11f19cfb43
+
+  product_mongo_data:
+  order_data:
+  kafka_data:
+  shipment_mongo_data:

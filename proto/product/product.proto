@@ -1,36 +1,33 @@
+
 syntax = "proto3";
 
 package product;
 
 service ProductService {
-  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+  rpc GetProduct (GetProductRequest) returns (ProductResponse);
 
-  rpc CheckAndDecreaseStock(CheckAndDecreaseStockRequest)
-      returns (CheckAndDecreaseStockResponse);
+  rpc CheckAndDecreaseStock (DecreaseStockRequest)
+      returns (DecreaseStockResponse);
 }
 
 message GetProductRequest {
-  int32 pid = 1;
+  string pid = 1;
 }
 
-message GetProductResponse {
-  int32 pid = 1;
+message ProductResponse {
+  string pid = 1;
   string pname = 2;
   double price = 3;
   int32 quantity = 4;
 }
 
-message CheckAndDecreaseStockRequest {
-  int32 pid = 1;
-  int32 qty = 2;
+message DecreaseStockRequest {
+  string pid = 1;
+  int32 quantity = 2;
 }
 
-message CheckAndDecreaseStockResponse {
+message DecreaseStockResponse {
   bool success = 1;
   string message = 2;
-
-  int32 pid = 3;
-  string pname = 4;
-  double unit_price = 5;
-  int32 remaining_quantity = 6;
+  int32 remaining_quantity = 3;
 }

@@ -3,17 +3,18 @@ syntax = "proto3";
 package customer;
 
 service CustomerService {
-  rpc GetCustomerByUid(GetCustomerByUidRequest) returns (GetCustomerByUidResponse);
+  rpc GetCustomer (GetCustomerRequest) returns (CustomerResponse);
 }
 
-message GetCustomerByUidRequest {
+message GetCustomerRequest {
   int32 uid = 1;
 }
 
-message GetCustomerByUidResponse {
+message CustomerResponse {
   int32 uid = 1;
-  string fullname = 2;
-  int32 mid = 3;
-  string membership_name = 4;
+  string full_name = 2;
+  string phone = 3;
+  string address = 4;
   int32 score = 5;
+  string tier = 6;
 }
