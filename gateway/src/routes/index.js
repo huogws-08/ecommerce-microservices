@@ -60,7 +60,7 @@ const customerProxy = createProxyMiddleware({
   },
 });
 
-// GET và PUT thông tin khách hàng
+// Customer xem thông tin của mình, ADMIN xem được tất cả.
 router.get(
   "/customers/:uid",
   authMiddleware,
@@ -72,6 +72,22 @@ router.put(
   "/customers/:uid",
   authMiddleware,
   requireOwnerOrAdmin,
+  customerProxy
+);
+
+// Membership: CUSTOMER chỉ xem của mình, ADMIN xem được tất cả.
+router.get(
+  "/customers/:uid/membership",
+  authMiddleware,
+  requireOwnerOrAdmin,
+  customerProxy
+);
+
+// Chỉ ADMIN được cập nhật score và tier.
+router.patch(
+  "/customers/:uid/membership",
+  authMiddleware,
+  requireRole("ADMIN"),
   customerProxy
 );
 
@@ -92,10 +108,7 @@ const productProxy = createProxyMiddleware({
       async (responseBuffer, proxyRes, req, res) => {
         const statusCode = proxyRes.statusCode;
 
-        if (
-          req.method === "GET" &&
-          statusCode === 200
-        ) {
+        if (req.method === "GET" && statusCode === 200) {
           await saveProductCache(
             req,
             responseBuffer.toString("utf8")
@@ -152,10 +165,12 @@ router.use(
 
     on: {
       proxyReq: (proxyReq, req, res) => {
-        fixRequestBody(proxyReq, req, res);
-
+        // Set headers trước khi ghi request body
         proxyReq.setHeader("x-user-id", String(req.user.uid));
         proxyReq.setHeader("x-user-role", String(req.user.role));
+
+        // Forward body sau khi đã thiết lập headers
+        fixRequestBody(proxyReq, req, res);
       },
     },
   })
@@ -172,11 +187,9 @@ router.use(
     pathRewrite: (path) => `/api/shipments${path}`,
     on: {
       proxyReq: (proxyReq, req) => {
-        // Xóa header do client tự gửi để tránh giả mạo
         proxyReq.removeHeader("x-user-id");
         proxyReq.removeHeader("x-user-role");
 
-        // Chỉ lấy thông tin từ JWT đã được xác thực
         proxyReq.setHeader("x-user-id", String(req.user.uid));
         proxyReq.setHeader("x-user-role", req.user.role);
 
