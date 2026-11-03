@@ -2,3 +2,7 @@
 # Local environment files
 .env
 **/.env
+
+# Local environment files
+.env
+**/.env
